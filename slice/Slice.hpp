@@ -1,11 +1,12 @@
 #include <array>
-#include <concepts>
 #include <cstddef>
 #include <cstdlib>
 #include <iterator>
 #include <memory>
 #include <span>
 #include <type_traits>
+
+#include "lib/assert.hpp"
 
 inline constexpr std::ptrdiff_t dynamic_stride = -1;
 
@@ -44,9 +45,9 @@ struct storage_stride<dynamic_stride> {
   std::ptrdiff_t S;
 };
 
-template<typename T>
+template <typename T>
 class iterator {
-public:
+ public:
   using iterator_category = std::random_access_iterator_tag;
   using value_type = T;
   using difference_type = std::ptrdiff_t;
@@ -59,16 +60,14 @@ public:
 
   iterator(const iterator& other) = default;
 
-  iterator(const pointer ptr, const difference_type skip = 1) : ptr_(ptr), skip_(skip) {}
+  iterator(const pointer ptr, const difference_type skip = 1)
+      : skip_(skip), ptr_(ptr) {}
 
   iterator& operator=(const iterator& other) = default;
 
   iterator& operator=(iterator&& other) = default;
 
-
-  reference operator*() const {
-    return *ptr_;
-  }
+  reference operator*() const { return *ptr_; }
 
   reference operator[](const difference_type i) const {
     return ptr_[skip_ * i];
@@ -104,13 +103,9 @@ public:
     return *this;
   }
 
-  bool operator<=>(const iterator& other) const {
-    return ptr_ <=> other.ptr_;
-  }
+  bool operator<=>(const iterator& other) const { return ptr_ <=> other.ptr_; }
 
-  bool operator==(const iterator& other) const {
-    return ptr_ == other.ptr_;
-  }
+  bool operator==(const iterator& other) const { return ptr_ == other.ptr_; }
 
   iterator operator+(const difference_type offset) const {
     iterator res = *this;
@@ -144,19 +139,21 @@ public:
     return copy;
   }
 
-private:
+ private:
   difference_type skip_;
   pointer ptr_;
 };
-}
+}  // namespace detail
 
 template <class T, std::size_t extent = std::dynamic_extent,
           std::ptrdiff_t stride = 1>
-class Slice : public detail::storage_extent<extent>, public detail::storage_stride<stride> {
-private:
+class Slice : public detail::storage_extent<extent>,
+              public detail::storage_stride<stride> {
+ private:
   using ExtentT = detail::storage_extent<extent>;
   using StrideT = detail::storage_stride<stride>;
-public:
+
+ public:
   using element_type = T;
   using value_type = typename std::remove_cv<T>::type;
   using size_type = std::size_t;
@@ -168,24 +165,35 @@ public:
   using iterator = detail::iterator<T>;
   using const_iterator = const iterator;
   using reverse_iterator = std::reverse_iterator<iterator>;
+public:
+  constexpr Slice() : ExtentT(0), StrideT(1), data_(nullptr) {}
 
-  constexpr Slice() : data_(nullptr), ExtentT(0), StrideT(1) {}
+  template <class U, size_type E, difference_type S>
+  constexpr Slice(const Slice<U, E, S>& lhs) noexcept
+      : Slice(lhs.Data(), lhs.Size(), lhs.Stride()) {}
 
-  template<class U, size_type E, difference_type S>
-  requires(std::is_convertible<element_type, U>::value)
-  constexpr Slice(const Slice<U, E, S>& lhs) noexcept : Slice(lhs.Data(), lhs.Size(), lhs.Stride()) {}
+  template <class U, size_type E, difference_type S>
+  constexpr Slice(Slice<U, E, S>& lhs) noexcept
+      : Slice(lhs.Data(), lhs.Size(), lhs.Stride()) {}
 
   template <class U>
-  Slice(U& container)
-      : ExtentT(std::size(container)),
-        StrideT(1),
-        data_(std::data(container)){};
+  constexpr Slice(U& container)
+        requires(std::is_convertible_v<decltype(std::data(container)), pointer> &&
+             std::is_convertible_v<decltype(std::size(container)), size_type>)
+          : Slice(std::data(container), std::size(container), stride){};
+
+  template <class U>
+  constexpr Slice(U& container, difference_type skip)
+    requires(std::is_convertible_v<decltype(std::data(container)), pointer> &&
+             std::is_convertible_v<decltype(std::size(container)), size_type>)
+      : Slice(std::data(container), std::size(container), skip) {};
 
   template <std::contiguous_iterator It>
-  Slice(It first, std::size_t count, std::ptrdiff_t skip)
-      : ExtentT(count),
-        StrideT(skip),
-        data_(std::to_address(first)) {}
+  constexpr Slice(It first, std::size_t count, std::ptrdiff_t skip)
+      : ExtentT(count), StrideT(skip) , data_(std::to_address(first)) {}
+
+  template<class U>
+  constexpr Slice(U* ptr, difference_type skip) : ExtentT(sizeof(data_)),  StrideT(skip), data_(ptr) {}
 
   ~Slice() noexcept = default;
 
@@ -197,88 +205,153 @@ public:
     return this->value_stride();
   }
 
-  constexpr iterator begin() const noexcept { return iterator(Data(), Stride()); }
+  constexpr bool Empty() const noexcept { return Size() == 0; }
+  constexpr iterator begin() const noexcept {
+    return iterator(Data(), Stride());
+  }
 
-  constexpr iterator end() const noexcept { return iterator(Data() + (Size() * Stride()), Stride()); }
+  constexpr iterator end() const noexcept {
+    return iterator(Data() + (Size() * Stride()), Stride());
+  }
 
-  constexpr reverse_iterator rbegin() const noexcept { return reverse_iterator(end()); }
+  constexpr reverse_iterator rbegin() const noexcept {
+    return reverse_iterator(end());
+  }
 
-  constexpr reverse_iterator rend() const noexcept { return begin(); }
+  constexpr reverse_iterator rend() const noexcept {
+    return reverse_iterator(begin());
+  }
 
   constexpr const_iterator cbegin() const noexcept { return begin(); }
 
   constexpr const_iterator cend() const noexcept { return end(); }
 
   constexpr reference At(const size_type i) const {
+    MPC_VERIFY(i < Size());
     return begin()[i];
   }
 
-  constexpr reference operator[](const size_type i) const {
-    return At(i);
+  constexpr reference operator[](const size_type i) const { return At(i); }
+
+  template <class U, size_type e, difference_type s>
+  bool operator==(const Slice<U, e, s>& other) const noexcept {
+    return other.Data() == Data() && other.Size() == Size() &&
+           other.Stride() == Stride();
   }
 
-  template<class U, size_type e, difference_type s>
-  bool operator==(const Slice<U, e, s>& other) const {
-    return other.Data() == Data() && other.Size() == Size() && other.Stride() == Stride();
+  constexpr Slice<T, std::dynamic_extent, stride> First(
+      std::size_t count) const {
+    MPC_VERIFY(count <= Size());
+    return Slice(data_, count, Stride());
   }
-  // // Data, Size, Stride, begin, end, casts, etc...
 
-  // Slice<T, std::dynamic_extent, stride>
-  //   First(std::size_t count) const;
+  template <std::size_t count>
+  constexpr Slice<T, count, stride> First() const {
+    MPC_VERIFY(count <= Size());
+    return Slice(data_, count, Stride());
+  }
 
-  // template <std::size_t count>
-  // Slice<T, /*?*/, stride>
-  //   First() const;
+  constexpr Slice<T, std::dynamic_extent, stride> Last(
+      std::size_t count) const {
+    MPC_VERIFY(count <= Size());
+    return Slice(Data() + ((Size() - count) * Stride()), count, Stride());
+  }
 
-  // Slice<T, std::dynamic_extent, stride>
-  //   Last(std::size_t count) const;
+  template <std::size_t count>
+  constexpr Slice<T, count, stride> Last() const {
+    MPC_VERIFY(count <= Size());
+    return Slice(Data() + ((Size() - count) * Stride()), count, Stride());
+  }
 
-  // template <std::size_t count>
-  // Slice<T, /*?*/, stride>
-  //   Last() const;
+  constexpr Slice<T, std::dynamic_extent, stride> DropFirst(
+      std::size_t count) const {
+    MPC_VERIFY(count <= Size());
+    return Last(Size() - count);
+  }
 
-  // Slice<T, std::dynamic_extent, stride>
-  //   DropFirst(std::size_t count) const;
+  // clang-format off
+  template <std::size_t count>
+  constexpr Slice<
+                  T,
+                  extent == std::dynamic_extent
+                    ? std::dynamic_extent
+                    : extent - count,
+                  stride>
+  // clang-format on
+  DropFirst() const {
+    MPC_VERIFY(count <= Size());
+    return Last<extent - count>();
+  }
 
-  // template <std::size_t count>
-  // Slice<T, /*?*/, stride>
-  //   DropFirst() const;
+  constexpr Slice<T, std::dynamic_extent, stride> DropLast(
+      std::size_t count) const {
+    MPC_VERIFY(count <= Size());
+    return First(Size() - count);
+  }
 
-  // Slice<T, std::dynamic_extent, stride>
-  //   DropLast(std::size_t count) const;
+  // clang-format off
+  template <std::size_t count>
+  Slice<
+        T,
+        extent == std::dynamic_extent
+          ? std::dynamic_extent
+          : extent - count,
+        stride>
+  // clang-format on
+  DropLast() const {
+    return First<extent - count>();
+  };
 
-  // template <std::size_t count>
-  // Slice<T, /*?*/, stride>
-  //   DropLast() const;
+  // clang-format off
+  constexpr Slice<
+                  T,
+                  std::dynamic_extent,
+                  dynamic_stride
+                  >
+  // clang-format on
+  Skip(std::ptrdiff_t skip) const {
+    return Slice<T, std::dynamic_extent, dynamic_stride>(Data(),
+                 Size() % skip == 0
+                   ? size_type(Size() / skip)
+                   : size_type(Size() / skip + 1),
+                 skip * Stride());
+  }
 
-  // Slice<T, /*?*/, /*?*/>
-  //   Skip(std::ptrdiff_t skip) const;
+  // clang-format off
+  template <std::ptrdiff_t skip>
+  constexpr Slice<
+                  T,
+                  extent == std::dynamic_extent
+                    ? std::dynamic_extent
+                    : extent % skip == 0
+                      ? extent / skip
+                      : extent / skip + 1 ,
+                  stride == dynamic_stride
+                    ? dynamic_stride
+                    : skip * stride>
+  // clang-format on
+  Skip() const {
+    return Slice(Data(),
+                 Size() % skip == 0
+                   ? Size() / skip
+                   : Size() / skip + 1,
+                 skip * Stride());
+  }
 
-  // template <std::ptrdiff_t skip>
-  // Slice<T, /*?*/, /*?*/>
-  //   Skip() const;
  private:
-  T* data_;
+  pointer data_;
 };
 
+template <std::contiguous_iterator It>
+Slice(It, std::size_t, std::ptrdiff_t)
+    -> Slice<std::remove_reference_t<std::iter_reference_t<It>>,
+             std::dynamic_extent, dynamic_stride>;
 
-template
-  < std::contiguous_iterator It
-  >
-Slice(It, std::size_t, std::ptrdiff_t) -> Slice<std::remove_reference_t<std::iter_reference_t<It>>, std::dynamic_extent, dynamic_stride>;
-
-template
-  < class T
-  , std::size_t N
-  >
+template <class T, std::size_t N>
 Slice(std::array<T, N>&) -> Slice<T, N>;
 
-template
-  < class U
-  >
+template <class U>
 Slice(U&) -> Slice<typename U::value_type>;
 
-template
-  < class U
-  >
+template <class U>
 Slice(const U&) -> Slice<const typename U::value_type>;
