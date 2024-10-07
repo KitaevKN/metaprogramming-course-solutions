@@ -280,7 +280,10 @@ public:
   // clang-format on
   DropFirst() const {
     MPC_VERIFY(count <= Size());
-    return Last<extent - count>();
+    if constexpr (extent == std::dynamic_extent)
+      return Last(Size() - count);
+    else
+      return Last<extent - count>();
   }
 
   constexpr Slice<T, std::dynamic_extent, stride> DropLast(
@@ -299,7 +302,11 @@ public:
         stride>
   // clang-format on
   DropLast() const {
-    return First<extent - count>();
+    MPC_VERIFY(count <= Size());
+    if constexpr(extent == std::dynamic_extent)
+      return First(Size() - count);
+    else
+      return First<extent - count>();
   };
 
   // clang-format off
