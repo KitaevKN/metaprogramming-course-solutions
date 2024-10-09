@@ -185,31 +185,34 @@ class Slice : public detail::storage_extent<extent>,
   constexpr Slice(U& container)
     requires(std::is_convertible_v<decltype(std::data(container)), pointer> &&
              std::is_convertible_v<decltype(std::size(container)), size_type>)
-      : Slice(std::data(container), std::size(container), stride) {
-    MPC_VERIFY(extent == std::dynamic_extent ||
-               extent == std::size(container) / stride);
-  };
+      : Slice(container, stride){};
 
   template <class U>
   constexpr Slice(U& container, difference_type skip)
     requires(std::is_convertible_v<decltype(std::data(container)), pointer> &&
              std::is_convertible_v<decltype(std::size(container)), size_type>)
-      : Slice(std::data(container), std::size(container), skip) {
+      : ExtentT(std::size(container)),
+        StrideT(skip),
+        data_(std::data(container)) {
     MPC_VERIFY(extent == std::dynamic_extent ||
                extent == std::size(container) / skip);
+    MPC_VERIFY(stride == dynamic_stride || stride == skip);
   };
 
   template <std::contiguous_iterator It>
-  requires(extent != std::dynamic_extent)
+    requires(extent != std::dynamic_extent)
   constexpr Slice(It first, std::size_t count, std::ptrdiff_t skip)
       : ExtentT(count), StrideT(skip), data_(std::to_address(first)) {
+    MPC_VERIFY(extent == count / skip + (count % skip != 0));
     MPC_VERIFY(stride == dynamic_stride || stride == skip);
   }
 
   template <std::contiguous_iterator It>
-  requires(extent == std::dynamic_extent)
+    requires(extent == std::dynamic_extent)
   constexpr Slice(It first, std::size_t count, std::ptrdiff_t skip)
-      : ExtentT(count / skip + (count % skip != 0)), StrideT(skip), data_(std::to_address(first)) {
+      : ExtentT(count / skip + (count % skip != 0)),
+        StrideT(skip),
+        data_(std::to_address(first)) {
     MPC_VERIFY(stride == dynamic_stride || stride == skip);
   }
   template <class U>
@@ -261,7 +264,8 @@ class Slice : public detail::storage_extent<extent>,
 
   constexpr auto First(std::size_t count) const {
     MPC_VERIFY(count <= Size());
-    return Slice<T, std::dynamic_extent, stride>(Data(), count * Stride(), Stride());
+    return Slice<T, std::dynamic_extent, stride>(Data(), count * Stride(),
+                                                 Stride());
   }
 
   template <std::size_t count>
@@ -313,23 +317,17 @@ class Slice : public detail::storage_extent<extent>,
 
   constexpr auto Skip(std::ptrdiff_t skip) const {
     return Slice<T, std::dynamic_extent, dynamic_stride>(
-        Data(),
-        Size() * Stride(),
-        skip * Stride());
+        Data(), Size() * Stride(), skip * Stride());
   }
 
   template <std::ptrdiff_t skip>
   constexpr auto Skip() const {
     return Slice < T,
            extent == std::dynamic_extent ? std::dynamic_extent
-           : extent % skip == 0          ? extent / skip
-                                         : extent / skip + 1,
+                                         : extent / skip + (extent % skip != 0),
            stride == dynamic_stride
                ? dynamic_stride
-               : skip * stride >
-                     (Data(),
-                      Size() * Stride(),
-                      skip * Stride());
+               : skip * stride > (Data(), Size() * Stride(), skip * Stride());
   }
 
  private:
