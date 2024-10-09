@@ -67,9 +67,13 @@ class iterator {
 
   iterator& operator=(iterator&& other) = default;
 
-  reference operator*() const { return *ptr_; }
+  reference operator*() const {
+    MPC_VERIFY(ptr_);
+    return *ptr_;
+  }
 
   reference operator[](const difference_type i) const {
+    MPC_VERIFY(ptr_);
     return ptr_[skip_ * i];
   }
 
@@ -165,7 +169,8 @@ class Slice : public detail::storage_extent<extent>,
   using iterator = detail::iterator<T>;
   using const_iterator = const iterator;
   using reverse_iterator = std::reverse_iterator<iterator>;
-public:
+
+ public:
   constexpr Slice() : ExtentT(0), StrideT(1), data_(nullptr) {}
 
   template <class U, size_type E, difference_type S>
@@ -178,22 +183,30 @@ public:
 
   template <class U>
   constexpr Slice(U& container)
-        requires(std::is_convertible_v<decltype(std::data(container)), pointer> &&
+    requires(std::is_convertible_v<decltype(std::data(container)), pointer> &&
              std::is_convertible_v<decltype(std::size(container)), size_type>)
-          : Slice(std::data(container), std::size(container), stride){};
+      : Slice(std::data(container), std::size(container), stride) {
+    MPC_VERIFY(extent == std::dynamic_extent ||
+               extent == std::size(container) / stride);
+  };
 
   template <class U>
   constexpr Slice(U& container, difference_type skip)
     requires(std::is_convertible_v<decltype(std::data(container)), pointer> &&
              std::is_convertible_v<decltype(std::size(container)), size_type>)
-      : Slice(std::data(container), std::size(container), skip) {};
+      : Slice(std::data(container), std::size(container), skip) {
+    MPC_VERIFY(extent == std::dynamic_extent ||
+               extent == std::size(container) / skip);
+  };
 
   template <std::contiguous_iterator It>
   constexpr Slice(It first, std::size_t count, std::ptrdiff_t skip)
-      : ExtentT(count), StrideT(skip) , data_(std::to_address(first)) {}
+      : ExtentT(count), StrideT(skip), data_(std::to_address(first)) {
+    MPC_VERIFY(stride == dynamic_stride || stride == skip);
+  }
 
-  template<class U>
-  constexpr Slice(U* ptr, difference_type skip) : ExtentT(sizeof(data_)),  StrideT(skip), data_(ptr) {}
+  template <class U>
+  constexpr Slice(U* ptr, size_type count) : Slice(ptr, count, 1) {}
 
   ~Slice() noexcept = default;
 
@@ -239,46 +252,37 @@ public:
            other.Stride() == Stride();
   }
 
-  constexpr Slice<T, std::dynamic_extent, stride> First(
-      std::size_t count) const {
+  constexpr auto First(std::size_t count) const {
     MPC_VERIFY(count <= Size());
-    return Slice(data_, count, Stride());
+    return Slice<T, std::dynamic_extent, stride>(Data(), count, Stride());
   }
 
   template <std::size_t count>
-  constexpr Slice<T, count, stride> First() const {
+  constexpr auto First() const {
     MPC_VERIFY(count <= Size());
-    return Slice(data_, count, Stride());
+    return Slice<T, count, stride>(Data(), count, Stride());
   }
 
-  constexpr Slice<T, std::dynamic_extent, stride> Last(
-      std::size_t count) const {
+  constexpr auto Last(std::size_t count) const {
     MPC_VERIFY(count <= Size());
-    return Slice(Data() + ((Size() - count) * Stride()), count, Stride());
+    return Slice<T, std::dynamic_extent, stride>(
+        Data() + ((Size() - count) * Stride()), count, Stride());
   }
 
   template <std::size_t count>
-  constexpr Slice<T, count, stride> Last() const {
+  constexpr auto Last() const {
     MPC_VERIFY(count <= Size());
-    return Slice(Data() + ((Size() - count) * Stride()), count, Stride());
+    return Slice<T, count, stride>(Data() + ((Size() - count) * Stride()),
+                                   count, Stride());
   }
 
-  constexpr Slice<T, std::dynamic_extent, stride> DropFirst(
-      std::size_t count) const {
+  constexpr auto DropFirst(std::size_t count) const {
     MPC_VERIFY(count <= Size());
     return Last(Size() - count);
   }
 
-  // clang-format off
   template <std::size_t count>
-  constexpr Slice<
-                  T,
-                  extent == std::dynamic_extent
-                    ? std::dynamic_extent
-                    : extent - count,
-                  stride>
-  // clang-format on
-  DropFirst() const {
+  constexpr auto DropFirst() const {
     MPC_VERIFY(count <= Size());
     if constexpr (extent == std::dynamic_extent)
       return Last(Size() - count);
@@ -286,63 +290,40 @@ public:
       return Last<extent - count>();
   }
 
-  constexpr Slice<T, std::dynamic_extent, stride> DropLast(
-      std::size_t count) const {
+  constexpr auto DropLast(std::size_t count) const {
     MPC_VERIFY(count <= Size());
     return First(Size() - count);
   }
 
-  // clang-format off
   template <std::size_t count>
-  Slice<
-        T,
-        extent == std::dynamic_extent
-          ? std::dynamic_extent
-          : extent - count,
-        stride>
-  // clang-format on
-  DropLast() const {
+  constexpr auto DropLast() const {
     MPC_VERIFY(count <= Size());
-    if constexpr(extent == std::dynamic_extent)
+    if constexpr (extent == std::dynamic_extent)
       return First(Size() - count);
     else
       return First<extent - count>();
   };
 
-  // clang-format off
-  constexpr Slice<
-                  T,
-                  std::dynamic_extent,
-                  dynamic_stride
-                  >
-  // clang-format on
-  Skip(std::ptrdiff_t skip) const {
-    return Slice<T, std::dynamic_extent, dynamic_stride>(Data(),
-                 Size() % skip == 0
-                   ? size_type(Size() / skip)
-                   : size_type(Size() / skip + 1),
-                 skip * Stride());
+  constexpr auto Skip(std::ptrdiff_t skip) const {
+    return Slice<T, std::dynamic_extent, dynamic_stride>(
+        Data(),
+        Size() % skip == 0 ? size_type(Size() / skip)
+                           : size_type(Size() / skip + 1),
+        skip * Stride());
   }
 
-  // clang-format off
   template <std::ptrdiff_t skip>
-  constexpr Slice<
-                  T,
-                  extent == std::dynamic_extent
-                    ? std::dynamic_extent
-                    : extent % skip == 0
-                      ? extent / skip
-                      : extent / skip + 1 ,
-                  stride == dynamic_stride
-                    ? dynamic_stride
-                    : skip * stride>
-  // clang-format on
-  Skip() const {
-    return Slice(Data(),
-                 Size() % skip == 0
-                   ? Size() / skip
-                   : Size() / skip + 1,
-                 skip * Stride());
+  constexpr auto Skip() const {
+    return Slice < T,
+           extent == std::dynamic_extent ? std::dynamic_extent
+           : extent % skip == 0          ? extent / skip
+                                         : extent / skip + 1,
+           stride == dynamic_stride
+               ? dynamic_stride
+               : skip * stride >
+                     (Data(),
+                      Size() % skip == 0 ? Size() / skip : Size() / skip + 1,
+                      skip * Stride());
   }
 
  private:
