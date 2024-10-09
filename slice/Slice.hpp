@@ -1,3 +1,6 @@
+#ifndef SLICE_HPP
+#define SLICE_HPP
+
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -10,7 +13,20 @@
 
 inline constexpr std::ptrdiff_t dynamic_stride = -1;
 
+template <class T, std::size_t extent = std::dynamic_extent,
+          std::ptrdiff_t stride = 1>
+class Slice;
+
 namespace detail {
+template <typename T>
+struct is_slice : std::false_type {};
+
+template <typename T>
+struct is_slice<Slice<T>> : std::true_type {};
+
+template <typename T>
+constexpr bool is_slice_v = is_slice<T>::value;
+
 template <std::size_t size>
 struct storage_extent {
   constexpr storage_extent(std::size_t) noexcept {}
@@ -149,8 +165,7 @@ class iterator {
 };
 }  // namespace detail
 
-template <class T, std::size_t extent = std::dynamic_extent,
-          std::ptrdiff_t stride = 1>
+template <class T, std::size_t extent, std::ptrdiff_t stride>
 class Slice : public detail::storage_extent<extent>,
               public detail::storage_stride<stride> {
  private:
@@ -229,6 +244,7 @@ class Slice : public detail::storage_extent<extent>,
   }
 
   constexpr bool Empty() const noexcept { return Size() == 0; }
+
   constexpr iterator begin() const noexcept {
     return iterator(Data(), Stride());
   }
@@ -340,6 +356,9 @@ Slice(It, std::size_t, std::ptrdiff_t)
              std::dynamic_extent, dynamic_stride>;
 
 template <class T, std::size_t N>
+Slice(std::span<T, N>&) -> Slice<T, N>;
+
+template <class T, std::size_t N>
 Slice(std::array<T, N>&) -> Slice<T, N>;
 
 template <class U>
@@ -347,3 +366,4 @@ Slice(U&) -> Slice<typename U::value_type>;
 
 template <class U>
 Slice(const U&) -> Slice<const typename U::value_type>;
+#endif  // SLICE_HPP
