@@ -189,11 +189,19 @@ class Slice : public detail::storage_extent<extent>,
   constexpr Slice() : ExtentT(0), StrideT(1), data_(nullptr) {}
 
   template <class U, size_type E, difference_type S>
-  constexpr Slice(const Slice<U, E, S>& lhs) noexcept
+  explicit(extent != std::dynamic_extent &&
+           E == std::dynamic_extent) constexpr Slice(const Slice<U, E, S>&
+                                                         lhs) noexcept
+    requires(extent == std::dynamic_extent || E == std::dynamic_extent ||
+             E == extent)
       : ExtentT(lhs.Size()), StrideT(lhs.Stride()), data_(lhs.Data()) {}
 
   template <class U, size_type E, difference_type S>
-  constexpr Slice(Slice<U, E, S>& lhs) noexcept
+  explicit(
+      extent != std::dynamic_extent &&
+      E == std::dynamic_extent) constexpr Slice(Slice<U, E, S>& lhs) noexcept
+    requires(extent == std::dynamic_extent || E == std::dynamic_extent ||
+             E == extent)
       : ExtentT(lhs.Size()), StrideT(lhs.Stride()), data_(lhs.Data()) {}
 
   template <class U>
