@@ -19,19 +19,22 @@ concept Empty = std::derived_from<TL, Nil>;
 template <class TL>
 concept TypeList = Empty<TL> || TypeSequence<TL>;
 
+namespace detail {
+//======= Cons =======
 template <class T, TypeList TL>
 struct Cons {
   using Head = T;
   using Tail = TL;
 };
 
+//======= Repeat =======
 template <class T>
 struct Repeat {
   using Head = T;
   using Tail = Repeat<T>;
 };
 
-namespace detail {
+//======= ToTuple =======
 template <TypeList TL, class... Ts>
 struct ToTuple {
   using Type =
@@ -42,12 +45,8 @@ template <Empty TL, class... Ts>
 struct ToTuple<TL, Ts...> {
   using Type = type_tuples::TTuple<Ts...>;
 };
-}  // namespace detail
 
-template <TypeList TL, class... Ts>
-using ToTuple = detail::ToTuple<TL, Ts...>::Type;
-
-namespace detail {
+//======= FromTuple =======
 template <type_tuples::TypeTuple TT>
 struct FromTuple;
 
@@ -61,12 +60,8 @@ template <>
 struct FromTuple<type_tuples::TTuple<>> {
   using Type = Nil;
 };
-}  // namespace detail
 
-template <type_tuples::TypeTuple Ts>
-using FromTuple = typename detail::FromTuple<Ts>::Type;
-
-namespace detail {
+//======= Take =======
 template <std::size_t size, TypeList TL>
 struct Take {
   using Head = typename TL::Head;
@@ -78,12 +73,8 @@ struct Take<0, TL> : Nil {};
 
 template <std::size_t size, Empty TL>
 struct Take<size, TL> : Nil {};
-}  // namespace detail
 
-template <std::size_t size, TypeList TL>
-using Take = typename detail::Take<size, TL>;
-
-namespace detail {
+//======= Drop =======
 template <std::size_t size, TypeList TL>
 struct Drop {
   using Type = Drop<size - 1, typename TL::Tail>::Type;
@@ -98,21 +89,15 @@ template <TypeList TL>
 struct Drop<0, TL> {
   using Type = TL;
 };
-}  // namespace detail
 
-template <std::size_t size, TypeList TL>
-using Drop = typename detail::Drop<size, TL>::Type;
-
-template <std::size_t size, typename T>
-using Replicate = Take<size, Repeat<T>>;
-
+//======= Iterate =======
 template <template <class, class...> class Obj, class T>
 struct Iterate {
   using Head = T;
   using Tail = Iterate<Obj, Obj<T>>;
 };
 
-namespace detail {
+//======= Cycle =======
 template <TypeList TL1, TypeList TL2>
 struct Cycle {
   using Head = TL1::Head;
@@ -127,12 +112,8 @@ struct Cycle<TL1, TL2> {
 
 template <Empty TL1, Empty TL2>
 struct Cycle<TL1, TL2> : Nil {};
-}  // namespace detail
 
-template <TypeList TL>
-using Cycle = detail::Cycle<TL, TL>;
-
-namespace detail {
+//======= Map =======
 template <template <class, class...> class Obj, TypeList TL>
 struct Map {
   using Head = Obj<typename TL::Head>;
@@ -141,12 +122,8 @@ struct Map {
 
 template <template <class, class...> class Obj, Empty TL>
 struct Map<Obj, TL> : Nil {};
-}  // namespace detail
 
-template <template <class, class...> class Obj, TypeList TL>
-using Map = detail::Map<Obj, TL>;
-
-namespace detail {
+//======= Filter =======
 template <template <class, class...> class P, TypeList TL>
 struct Filter : Filter<P, typename TL::Tail> {};
 
@@ -159,12 +136,8 @@ struct Filter<P, TL> {
 
 template <template <class, class...> class P, Empty TL>
 struct Filter<P, TL> : Nil {};
-}  // namespace detail
 
-template <template <class, class...> class Obj, TypeList TL>
-using Filter = detail::Filter<Obj, TL>;
-
-namespace detail {
+//======= Scanl =======
 template <template <class, class> class Obj, class T, TypeList TL>
 struct Scanl {
   using Head = Obj<T, typename TL::Head>;
@@ -173,15 +146,8 @@ struct Scanl {
 
 template <template <class, class> class Obj, class T, Empty TL>
 struct Scanl<Obj, T, TL> : Nil {};
-}  // namespace detail
 
-template <template <class, class> class Obj, class T, TypeList TL>
-struct Scanl {
-  using Head = T;
-  using Tail = detail::Scanl<Obj, T, TL>;
-};
-
-namespace detail {
+//======= Foldl =======
 template <template <class, class> class Obj, class T, TypeList TL>
 struct Foldl {
   using Type = Foldl<Obj, Obj<T, typename TL::Head>, typename TL::Tail>::Type;
@@ -191,12 +157,8 @@ template <template <class, class> class Obj, class T, Empty TL>
 struct Foldl<Obj, T, TL> {
   using Type = T;
 };
-}  // namespace detail
 
-template <template <class, class> class Obj, class T, TypeList TL>
-using Foldl = detail::Foldl<Obj, T, TL>::Type;
-
-namespace detail {
+//======= Foldr =======
 template <template <class, class> class Obj, class T, TypeList TL>
 struct Foldr {
   using Type =
@@ -207,29 +169,21 @@ template <template <class, class> class Obj, class T, Empty TL>
 struct Foldr<Obj, T, TL> {
   using Type = T;
 };
-}  // namespace detail
 
-template <template <class, class> class Obj, class T, TypeList TL>
-using Foldr = detail::Foldr<Obj, T, TL>::Type;
-
-namespace detail {
+//======= Inits =======
 template <TypeList TL, typename... Ts>
 struct Inits {
-  using Head = type_lists::FromTuple<type_tuples::TTuple<Ts...>>;
+  using Head = FromTuple<type_tuples::TTuple<Ts...>>::Type;
   using Tail = Inits<typename TL::Tail, Ts..., typename TL::Head>;
 };
 
 template <Empty TL, typename... Ts>
 struct Inits<TL, Ts...> {
-  using Head = type_lists::FromTuple<type_tuples::TTuple<Ts...>>;
+  using Head = FromTuple<type_tuples::TTuple<Ts...>>::Type;
   using Tail = Nil;
 };
-}  // namespace detail
 
-template <TypeList TL>
-using Inits = detail::Inits<TL>;
-
-namespace detail {
+//======= Tails =======
 template <TypeList TL>
 struct Tails {
   using Head = TL;
@@ -241,12 +195,8 @@ struct Tails<TL> {
   using Head = Nil;
   using Tail = Nil;
 };
-}  // namespace detail
 
-template <TypeList TL>
-using Tails = detail::Tails<TL>;
-
-namespace detail {
+//======= Zip2 =======
 template <TypeList TL1, TypeList TL2>
 struct Zip2 {
   using Head = type_tuples::TTuple<typename TL1::Head, typename TL2::Head>;
@@ -261,12 +211,8 @@ struct Zip2<TL1, TL2> : Nil {};
 
 template <Empty TL1, Empty TL2>
 struct Zip2<TL1, TL2> : Nil {};
-}  // namespace detail
 
-template <TypeList TL1, TypeList TL2>
-using Zip2 = detail::Zip2<TL1, TL2>;
-
-namespace detail {
+//======= Zip =======
 template <TypeList... TL>
 struct Zip {
   using Head = type_tuples::TTuple<typename TL::Head...>;
@@ -274,7 +220,61 @@ struct Zip {
 };
 }  // namespace detail
 
+template <class T, TypeList TL>
+using Cons = detail::Cons<T, TL>;
+
+template <class T>
+using Repeat = detail::Repeat<T>;
+
+template <TypeList TL, class... Ts>
+using ToTuple = detail::ToTuple<TL, Ts...>::Type;
+
+template <type_tuples::TypeTuple Ts>
+using FromTuple = detail::FromTuple<Ts>::Type;
+
+template <std::size_t size, TypeList TL>
+using Take = detail::Take<size, TL>;
+
+template <std::size_t size, TypeList TL>
+using Drop = detail::Drop<size, TL>::Type;
+
+template <std::size_t size, class T>
+using Replicate = Take<size, Repeat<T>>;
+
+template <template <class, class...> class Obj, class T>
+using Iterate = detail::Iterate<Obj, T>;
+
+template <TypeList TL>
+using Cycle = detail::Cycle<TL, TL>;
+
+template <template <class, class...> class Obj, TypeList TL>
+using Map = detail::Map<Obj, TL>;
+
+template <template <class, class...> class Obj, TypeList TL>
+using Filter = detail::Filter<Obj, TL>;
+
+template <template <class, class> class Obj, class T, TypeList TL>
+using Foldl = detail::Foldl<Obj, T, TL>::Type;
+
+template <template <class, class> class Obj, class T, TypeList TL>
+using Foldr = detail::Foldr<Obj, T, TL>::Type;
+
+template <TypeList TL>
+using Inits = detail::Inits<TL>;
+
+template <TypeList TL>
+using Tails = detail::Tails<TL>;
+
+template <TypeList TL1, TypeList TL2>
+using Zip2 = detail::Zip2<TL1, TL2>;
+
 template <TypeList... TL>
 using Zip = detail::Zip<TL...>;
+
+template <template <class, class> class Obj, class T, TypeList TL>
+struct Scanl {
+  using Head = T;
+  using Tail = detail::Scanl<Obj, T, TL>;
+};
 
 }  // namespace type_lists
