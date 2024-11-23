@@ -1,103 +1,139 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
-#include <type_traits>
 #include <limits>
 #include <string_view>
-#include <cstdint>
-
+#include <tuple>
+#include <type_traits>
+#include <utility>
 
 namespace detail {
-
-template<class Enum, Enum Name>
+template <class Enum, Enum Name>
 consteval auto name() {
-    return __PRETTY_FUNCTION__;
+  return __PRETTY_FUNCTION__;
 }
 
-template<class Enum, Enum value>
-constexpr bool isEnumPart() {
-    constexpr std::string_view name = detail::name<Enum, value>();
-    constexpr auto pos = name.find("::", sizeof("auto detail::name() [Enum ="));
-
-    return pos != std::string_view::npos;
-}
-template<class Enum, Enum value>
-constexpr std::string_view bind() {
-    constexpr std::string_view name = detail::name<Enum, value>();
-
-    constexpr auto begin = name.find("::", sizeof("auto detail::name() [Enum =")) + 2;
-    constexpr auto end = name.find(']', begin);
-
-    return name.substr(begin, end - begin);
+template <class Enum, std::size_t N>
+consteval bool isEnum() {
+  std::string_view name = detail::name<Enum, static_cast<Enum>(N)>();
+  auto pos = name.find('(', sizeof("auto detail::name() [Enum ="));
+  return pos == std::string_view::npos;
 }
 
-template <class Enum, std::int64_t Index, std::int64_t End>
-struct loop {
-  constexpr loop(std::int32_t& count) {
-    if(isEnumPart<Enum, static_cast<Enum>(Index)>())
-        count += 1;
+template <class Enum, std::size_t N>
+  requires(!std::is_convertible_v<Enum, std::underlying_type_t<Enum>>)
+consteval std::string_view bind() {
+  std::string_view name = detail::name<Enum, static_cast<Enum>(N)>();
 
-    if(isEnumPart<Enum, static_cast<Enum>(Index + 1)>())
-        count += 1;
+  auto begin = name.find("::", sizeof("auto detail::name() [Enum =")) + 2;
+  auto end = name.find(']', begin);
 
-    if(isEnumPart<Enum, static_cast<Enum>(Index + 2)>())
-        count += 1;
+  return (begin - 2) == std::string_view::npos
+             ? std::string_view()
+             : name.substr(begin, end - begin);
+}
 
-    if(isEnumPart<Enum, static_cast<Enum>(Index + 3)>())
-        count += 1;
+template <class Enum, std::size_t N>
+  requires(std::is_convertible_v<Enum, std::underlying_type_t<Enum>>)
+consteval std::string_view bind() {
+  std::string_view name = detail::name<Enum, static_cast<Enum>(N)>();
 
-    loop<Enum, Index + 2, End> cycle(count);
+  auto begin = name.find('=', sizeof("auto detail::name() [Enum =")) + 2;
+  auto end = name.find(']', begin);
+  return name.find('(', begin) != std::string_view::npos
+             ? std::string_view()
+             : name.substr(begin, end - begin);
+}
+
+template <class Enum, std::uint64_t MAXN, std::int64_t MINN>
+consteval auto size() {
+  std::size_t size = 0;
+  if constexpr (std::is_signed_v<std::underlying_type_t<Enum>>) {
+    [&size]<std::size_t... I>(std::index_sequence<I...>) {
+      (
+          [&size]() {
+            if (isEnum<Enum, I + MINN>()) ++size;
+          }(),
+          ...);
+    }(std::make_index_sequence<-MINN>());
   }
-};
 
-template <class Enum, std::int64_t End>
-struct loop<Enum, End + 1, End> {
-  constexpr loop(std::int32_t& count) {
-    if(isEnumPart<Enum, static_cast<Enum>(End)>())
-        count += 1;
-  }
-};
+  [&size]<std::size_t... I>(std::index_sequence<I...>) {
+    (
+        [&size]() {
+          if (isEnum<Enum, I>()) ++size;
+        }(),
+        ...);
+  }(std::make_index_sequence<MAXN + 1>());
 
-template <class Enum, std::int64_t End>
-struct loop<Enum, End, End> {
-  constexpr loop(std::int32_t& count) {
-    if(isEnumPart<Enum, static_cast<Enum>(End)>())
-        count += 1;
-  }
-};
+  return size;
 }
+
+template <class Enum, std::uint64_t ENUM_MAX, std::int64_t ENUM_MIN>
+consteval auto builder() {
+  constexpr std::size_t Size = detail::size<Enum, ENUM_MAX, ENUM_MIN>();
+  std::size_t index = 0;
+  std::array<Enum, Size> Enums;
+  std::array<std::string_view, Size> Names;
+
+  if constexpr (std::is_signed_v<std::underlying_type_t<Enum>>) {
+    [&Enums, &Names, &index]<std::size_t... I>(std::index_sequence<I...>) {
+      (
+          [&Enums, &Names, &index]() {
+            std::string_view name = detail::bind<Enum, I + ENUM_MIN>();
+            if (!name.empty()) {
+              Enums[index] = static_cast<Enum>(I + ENUM_MIN);
+              Names[index] = name;
+              index += 1;
+            }
+          }(),
+          ...);
+    }(std::make_index_sequence<-ENUM_MIN>());
+  }
+
+  [&Enums, &Names, &index]<std::size_t... I>(std::index_sequence<I...>) {
+    (
+        [&Enums, &Names, &index]() {
+          std::string_view name = detail::bind<Enum, I>();
+          if (!name.empty()) {
+            Enums[index] = static_cast<Enum>(I);
+            Names[index] = name;
+            index += 1;
+          }
+        }(),
+        ...);
+  }(std::make_index_sequence<ENUM_MAX + 1>());
+  return std::make_tuple(Size, Enums, Names);
+}
+}  // namespace detail
 
 template <class Enum, std::size_t MAXN = 512>
-	requires std::is_enum_v<Enum>
 struct EnumeratorTraits {
-    static constexpr const auto NUMERIC_MAX = static_cast<const int>(std::numeric_limits<std::underlying_type_t<Enum>>().max());
-    static constexpr const auto NUMERIC_MIN = static_cast<const int>(std::numeric_limits<std::underlying_type_t<Enum>>().min());
+ public:
+  static_assert(std::is_enum_v<Enum>);
 
-    static consteval std::size_t sizeEnum() {
-        std::size_t count = 0;
+  static constexpr std::uint64_t ENUM_MAX =
+      std::min(static_cast<std::uint64_t>(
+                   std::numeric_limits<std::underlying_type_t<Enum>>().max()),
+               static_cast<std::uint64_t>(MAXN));
 
-        std::int16_t MIN = -static_cast<std::int16_t>(MAXN);
-        std::int16_t MAX = static_cast<std::int16_t>(MAXN);
+  static constexpr std::int64_t ENUM_MIN =
+      std::max(static_cast<std::int64_t>(
+                   std::numeric_limits<std::underlying_type_t<Enum>>().min()),
+               -static_cast<std::int64_t>(MAXN));
 
-        const std::size_t shift = sizeof("auto detail::name() [Enum =");
-        for(std::int16_t i = MIN; i != MAX; ++i) {
-            std::string_view name = detail::name<Enum, static_cast<Enum>(i)>();
-            std::size_t pos = name.find("::", shift);
-            if(pos != std::string_view::npos)
-                count += 1;
-        }
-        return count;
-    }
+ private:
+  static constexpr auto storage = detail::builder<Enum, ENUM_MAX, ENUM_MIN>();
 
-    static constexpr std::size_t size() noexcept {
-       return sizeEnum();
-    }
+ public:
+  static constexpr std::size_t size() noexcept { return std::get<0>(storage); }
 
-    static constexpr Enum at(std::size_t i) noexcept {
-        return {};
-    }
+  static constexpr Enum at(std::size_t i) noexcept {
+    return std::get<1>(storage)[i];
+  }
 
-    static constexpr std::string_view nameAt(std::size_t i) noexcept {
-        return detail::bind<Enum, at(i)>();
-    }
+  static constexpr std::string_view nameAt(std::size_t i) noexcept {
+    return std::get<2>(storage)[i];
+  }
 };
