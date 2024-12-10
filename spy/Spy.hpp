@@ -1,6 +1,7 @@
 #pragma once
 
 #include <concepts>
+#include <functional>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -16,16 +17,18 @@ concept is_nothrow_three_way_comparable_v = requires(T a, T b) {
   { a <=> b } noexcept -> std::same_as<bool>;
 };
 
-struct PureLoggerHolder {
-  void operator()(unsigned int i) { this->Log(i); }
+struct PureLogger {
+  auto operator()(unsigned int i) { this->Log(i); }
 
   virtual void Log(unsigned int) = 0;
 
-  virtual ~PureLoggerHolder() noexcept = default;
+  virtual ~PureLogger() noexcept = default;
+
+  virtual PureLogger* copy() = 0;
 };
 
 template <class Logger>
-struct LoggerStorage : public PureLoggerHolder {
+struct LoggerStorage : public PureLogger {
  private:
   Logger logger;
 
@@ -34,6 +37,10 @@ struct LoggerStorage : public PureLoggerHolder {
       std::is_nothrow_default_constructible_v<Logger>)
     requires(std::is_default_constructible_v<Logger>)
   = default;
+
+  LoggerStorage& operator=(const LoggerStorage&) = delete;
+
+  LoggerStorage& operator=(LoggerStorage&&) = delete;
 
   constexpr LoggerStorage(const LoggerStorage&) noexcept(
       std::is_nothrow_copy_constructible_v<Logger>)
@@ -54,6 +61,13 @@ struct LoggerStorage : public PureLoggerHolder {
     this->logger(cnt);
   }
 
+  PureLogger* copy() override {
+    if constexpr (std::is_copy_constructible_v<Logger>) {
+      return new LoggerStorage(logger);
+    }
+    return nullptr;
+  }
+
   ~LoggerStorage() noexcept(std::is_nothrow_destructible_v<Logger>) override =
       default;
 };
@@ -64,19 +78,38 @@ struct LoggerStorage : public PureLoggerHolder {
 template <class T, class Allocator = std::allocator<std::byte>>
 class Spy {
  public:
+  using pure_logger_type = detail::PureLogger;
+  template <std::invocable<unsigned int> _log>
+  using logger_type = detail::LoggerStorage<_log>;
   using value_type = T;
   using allocator_type = Allocator;
-  using pure_logger_type = detail::PureLoggerHolder;
-  using pure_logger_ptr = detail::PureLoggerHolder*;
-  template <std::invocable<unsigned int> _log>
-  using logger_storage = detail::LoggerStorage<_log>;
 
  private:
+  class SpyRefer {
+    Spy& spy_;
+
+   public:
+    SpyRefer(Spy& spy) : spy_(spy) {}
+
+    ~SpyRefer() {
+      if (--spy_.reffer_cnt == 0) {
+        if (spy_.storage_) std::invoke(*spy_.storage_, spy_.call_cnt);
+        spy_.call_cnt = 0;
+      }
+    }
+
+    value_type* operator->() { return &spy_.value_; }
+  };
+
+  mutable unsigned int reffer_cnt = 0;
+
+  mutable unsigned int call_cnt = 0;
+
   value_type value_;
 
   allocator_type alloc_;
 
-  pure_logger_ptr storage_ = nullptr;
+  std::shared_ptr<pure_logger_type> storage_ = nullptr;
 
   template <std::invocable<unsigned int> Logger>
   static consteval bool is_same_constructible_v() {
@@ -89,16 +122,13 @@ class Spy {
       result &= std::is_move_assignable_v<Logger>;
     if (std::is_copy_assignable_v<Spy<T>>)
       result &= std::is_copy_assignable_v<Logger>;
+    if (std::is_nothrow_move_constructible_v<Spy<T>>)
+      result &= std::is_nothrow_move_constructible_v<Logger>;
+    if (std::is_nothrow_copy_constructible_v<Spy<T>>)
+      result &= std::is_nothrow_copy_constructible_v<Logger>;
     if (std::is_nothrow_destructible_v<Spy<T>>)
       result &= std::is_nothrow_destructible_v<Logger>;
     return result;
-  }
-
-  void destroy_storage() {
-    if (storage_ != nullptr) {
-      delete storage_;
-      storage_ = nullptr;
-    }
   }
 
  public:
@@ -108,25 +138,55 @@ class Spy {
     requires(std::is_default_constructible_v<value_type>)
   = default;
 
-  constexpr Spy(const Spy&) noexcept(
+  constexpr Spy(const Spy& other) noexcept(
       std::is_nothrow_copy_constructible_v<value_type>)
     requires(std::is_copy_constructible_v<value_type>)
-  = default;
+      : value_(other.value_), alloc_(other.alloc_) {
+    if (other.storage_) storage_.reset(other.storage_->copy());
+  }
 
-  constexpr Spy(Spy&&) noexcept(
+  constexpr Spy(Spy&& other) noexcept(
       std::is_nothrow_move_constructible_v<value_type>)
     requires(std::is_move_constructible_v<value_type>)
-  = default;
+      : value_(std::move(other.value_)),
+        alloc_(std::move(other.alloc_)),
+        storage_(std::move(other.storage_)) {}
 
-  constexpr Spy& operator=(const Spy&) noexcept(
+  constexpr Spy& operator=(const Spy& other) noexcept(
       std::is_nothrow_copy_assignable_v<value_type>)
     requires(std::is_copy_assignable_v<value_type>)
-  = default;
+  {
+    call_cnt = 0;
+    reffer_cnt = 0;
+    value_ = other.value_;
 
-  constexpr Spy& operator=(Spy&&) noexcept(
+    if (other.storage_)
+      storage_.reset(other.storage_->copy());
+    else
+      storage_.reset();
+
+    if constexpr (std::is_copy_assignable_v<allocator_type>)
+      alloc_ = other.alloc_;
+    return *this;
+  }
+
+  constexpr Spy& operator=(Spy&& other) noexcept(
       std::is_nothrow_move_assignable_v<value_type>)
-    requires(std::is_move_constructible_v<value_type>)
-  = default;
+    requires(std::is_move_assignable_v<value_type>)
+  {
+    call_cnt = 0;
+    reffer_cnt = 0;
+    value_ = std::move(other.value_);
+
+    if (other.storage_)
+      storage_ = std::move(other.storage_);
+    else
+      storage_.reset();
+
+    if constexpr (std::is_move_assignable_v<allocator_type>)
+      alloc_ = std::move(other.alloc_);
+    return *this;
+  }
 
   constexpr Spy(const allocator_type& alloc) noexcept(
       std::is_nothrow_copy_constructible_v<allocator_type> &&
@@ -148,42 +208,44 @@ class Spy {
       : value_(std::forward<value_type>(value)) {}
 
   ~Spy() noexcept(std::is_nothrow_destructible_v<value_type>) {
-    destroy_storage();
     value_.~value_type();
   }
 
-  constexpr bool operator<=>(const Spy& other) const
+  constexpr auto operator<=>(const Spy& other) const
       noexcept(detail::is_nothrow_three_way_comparable_v<value_type>)
     requires(std::three_way_comparable<value_type>)
   {
     return other.value_ == value_;
   }
 
-  constexpr bool operator==(const Spy& other) const
+  constexpr auto operator==(const Spy& other) const
       noexcept(detail::is_nothrow_equality_comparable_v<value_type>)
     requires(std::equality_comparable<value_type>)
   {
     return other.value_ == value_;
   }
 
-  T& operator*() noexcept { return std::addressof(value_); }
+  auto& operator*() noexcept { return std::addressof(value_); }
 
-  const T& operator*() const noexcept { return std::addressof(value_); }
+  const auto& operator*() const noexcept { return std::addressof(value_); }
 
-  T* operator->() noexcept {
-    static unsigned int counter = 0;
-    storage_->Log(counter);
+  auto operator->() noexcept {
+    call_cnt++;
+    reffer_cnt++;
+    return SpyRefer(*this);
+  }
+
+  auto operator->() const noexcept {
+    call_cnt++;
+    reffer_cnt++;
     return std::addressof(value_);
   }
 
-  const T* operator->() const noexcept { return std::addressof(value_); }
-
-  void setLogger() { destroy_storage(); }
+  void setLogger() { storage_.reset(); }
 
   template <std::invocable<unsigned int> Logger>
     requires(is_same_constructible_v<Logger>())
   void setLogger(Logger&& logger) noexcept {
-    destroy_storage();
-    storage_ = new logger_storage<Logger>(std::forward<Logger>(logger));
+    storage_.reset(new logger_type<Logger>(std::forward<Logger>(logger)));
   }
 };
