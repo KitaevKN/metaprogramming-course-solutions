@@ -28,7 +28,7 @@ struct PureLogger {
 };
 
 template <class Logger>
-struct LoggerStorage : public PureLogger {
+struct LoggerStorage final : public PureLogger {
  private:
   Logger logger;
 
