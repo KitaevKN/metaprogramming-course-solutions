@@ -4,15 +4,16 @@
 template <class From, auto target>
 struct Mapping {
   using Type = const From*;
-
+  using ValueType = decltype(target);
   static constexpr auto Value() { return target; }
 };
 
 template <class Base, class Target, class Object, class... Objects>
+  requires(std::is_same_v<Target, typename Object::ValueType>)
 static std::optional<Target> Finder(const Base& object) {
-  if (const auto* S = dynamic_cast<typename Object::Type>(&object); S) {
+  if (const auto* S = dynamic_cast<typename Object::Type>(&object); S)
     return Object::Value();
-  }
+
   return Finder<Base, Target, Objects...>(object);
 }
 

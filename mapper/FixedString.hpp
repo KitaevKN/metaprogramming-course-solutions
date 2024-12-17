@@ -18,6 +18,7 @@ struct loop<End, End> {
   constexpr loop(const char* from, char to[]) { to[End] = from[End]; }
 };
 }  // namespace detail
+
 template <std::size_t max_length>
 struct FixedString {
   constexpr FixedString(const char* string, std::size_t size) : len(size) {
